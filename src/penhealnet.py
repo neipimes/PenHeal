@@ -45,12 +45,12 @@ remediation_list2 = R_agent2.main()
 
 
 # Remediation for the new vulnerabilities
-additional_remediation = f"Since vulnerabilities are found in the IP address {IP1} 
-you should consider adding firewall rules to block the malicious traffic using this command: 'iptables -A INPUT -s {IP1} -j DROP'"
+additional_remediation = f"""Since vulnerabilities are found in the IP address {IP1} 
+you should consider adding firewall rules to block the malicious traffic using this command: 'iptables -A INPUT -s {IP1} -j DROP'"""
 remediation_list1.append(additional_remediation)
 
-additional_remediation = f"Since vulnerabilities are found in the IP address {IP2} 
-you should consider adding firewall rules to block the malicious traffic using this command: 'iptables -A INPUT -s {IP2} -j DROP'"
+additional_remediation = f"""Since vulnerabilities are found in the IP address {IP2} 
+you should consider adding firewall rules to block the malicious traffic using this command: 'iptables -A INPUT -s {IP2} -j DROP'"""
 remediation_list2.append(additional_remediation)
 
 
