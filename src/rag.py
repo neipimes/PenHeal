@@ -1,15 +1,13 @@
 import os
 import sys
-from langchain.chains import ConversationalRetrievalChain
-from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.document_loaders import Docx2txtLoader
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores import Chroma
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.llms import HuggingFaceHub
-from langchain_community.embeddings import HuggingFaceEmbeddings
+
 
 
 class RAG_module():
@@ -40,24 +38,33 @@ class RAG_module():
         )
         chunks = text_splitter.split_documents(documents)
 
-        openai_embeddings = OpenAIEmbeddings()
+        # Store embeddings for use in add_document
+        self.openai_embeddings = OpenAIEmbeddings()
 
         # Convert the document chunks to embedding and save them to the vector store
-        self.vectordb = Chroma.from_documents(chunks, embedding=openai_embeddings, persist_directory="./data")
+        self.vectordb = Chroma.from_documents(chunks, embedding=self.openai_embeddings, persist_directory="./data")
         self.vectordb.persist()
-        openai_llm = ChatOpenAI(temperature=0.7, model_name='gpt-4o')
-        # create our Q&A chain
-        self.pdf_qa = ConversationalRetrievalChain.from_llm(
-            openai_llm,
-            retriever=self.vectordb.as_retriever(search_kwargs={'k': 3}),
-            return_source_documents=True,
-            verbose=False
-        )
+        
+        # Store LLM and retriever as separate components (modern LangChain pattern)
+        self.openai_llm = ChatOpenAI(temperature=0.7, model='gpt-4o')
+        self.retriever = self.vectordb.as_retriever(search_kwargs={'k': 3})
 
     def add_document(self, document):
         self.vectordb = Chroma.from_documents(document, embedding=self.openai_embeddings, persist_directory="./data")
         self.vectordb.persist()
 
     def ask_question(self, query):
-        result = self.pdf_qa.invoke({"question": query})
-        return result["answer"]
+        """
+        Retrieve relevant documents for the given query.
+        Returns a list of source document contents for agents to use.
+        
+        Args:
+            query: The question to search for in the knowledge base
+            
+        Returns:
+            List of source document page contents (strings)
+        """
+        # Retrieve relevant documents from the vector store
+        source_documents = self.retriever.invoke(query)
+        # Return document contents as a list of strings
+        return [doc.page_content for doc in source_documents]
