@@ -36,6 +36,45 @@ This is the official implementation for the paper "PenHealNet: An Agent-based LL
     -  When prompted to enter the target IP address, enter the IP address of the target machine.
     - `python3 src/remediation_module.py`
 
+## Runtime model configuration
+
+PenHeal now supports separate model endpoints for chat and embeddings, including OpenAI-compatible servers such as LM Studio and OpenRouter.
+
+Configuration file: `config/models.yaml`
+
+Example:
+
+```yaml
+llm:
+    provider: openrouter
+    api_key: "your-openrouter-key"
+    model_name: "deepseek/deepseek-v4-pro"
+    temperature: 0.2
+    api_base: "https://openrouter.ai/api/v1"
+
+embeddings:
+    provider: openai
+    api_key: "your-key"
+    api_base: "http://localhost:1234/v1"
+    model_name: "text-embedding-3-small"
+
+rag:
+    chroma_dir: "./data"
+    rebuild_embeddings: false
+```
+
+Priority order:
+
+1. Explicit runtime config passed into the module.
+2. Values in `config/models.yaml`.
+3. Environment variables such as `OPENAI_API_KEY`, `OPENAI_BASEURL`, and `OPENROUTER_API_KEY`.
+
+Notes:
+
+- Use `rebuild_embeddings: true` when you want the Chroma store to be recreated with a new embedding model.
+- If the embedding model differs from the one used to create an existing store, PenHeal prints a warning and keeps the current store unless rebuilding is requested.
+- LM Studio works with the OpenAI-compatible `/v1` endpoint.
+
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->

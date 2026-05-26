@@ -1,17 +1,17 @@
 import dataclasses
 import inspect
-import os
+import os, getpass
 import re
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 from uuid import uuid1
 
 import loguru
-import openai
+from langchain_openrouter import ChatOpenRouter
 import tiktoken
-from tenacity import *
+from tenacity import retry, stop_after_attempt
 
-from agent_import import ChatGPTConfig
+from agent_import import OpenRouter_API_Endpoint
 
 logger = loguru.logger
 logger.remove()
@@ -21,8 +21,8 @@ logger.remove()
 @dataclasses.dataclass
 class Message:
     ask_id: str = ""
-    ask: dict = {}
-    answer: dict = {}
+    ask: list = dataclasses.field(default_factory=list)
+    answer: list = dataclasses.field(default_factory=list)
     answer_id: str = ""
     request_start_timestamp: float = 0.0
     request_end_timestamp: float = 0.0
@@ -44,23 +44,16 @@ class Conversation:
 
 
 class LLMAPI:
-    def __init__(self, config: ChatGPTConfig):
+    def __init__(self, config: OpenRouter_API_Endpoint):
         self.name = "LLMAPI_base_class"
         self.config = config
-        # configure openai client from config where available
-        try:
-            openai.api_key = getattr(config, "openai_key", None)
-        except Exception:
-            pass
-        try:
-            openai.proxy = getattr(config, "proxies", None)
-        except Exception:
-            pass
-        try:
-            openai.api_base = getattr(config, "api_base", None)
-        except Exception:
-            pass
-        self.log_dir = config.log_dir
+        self.client = ChatOpenRouter(
+            model = config.model_name,
+            reasoning = config.reasoning,
+            openrouter_provider = config.openrouter_provider,
+            temperature = config.temperature
+        )
+        self.log_dir = "logs"
         self.history_length = 5  # maintain 5 messages in the history. (5 chat memory)
         self.conversation_dict: Dict[str, Conversation] = {}
 
@@ -78,8 +71,7 @@ class LLMAPI:
         """
         # count the token. Use model gpt-3.5-turbo-0301, which is slightly different from gpt-4
         # https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb
-        # prefer model from config if available
-        model = getattr(self.config, "model", "gpt-3.5-turbo-0301")
+        model = "gpt-3.5-turbo-0301"
         tokens_per_message = (
             4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
         )
@@ -110,7 +102,7 @@ class LLMAPI:
         -------
             compressed_message: str
         """
-        if self.model == "gpt-4":
+        if getattr(self.config, "model_name", "gpt-4") == "gpt-4":
             token_limit = 8000
         else:
             token_limit = 14000  # leave some budget
@@ -155,79 +147,27 @@ class LLMAPI:
         -------
             response: str
         """
-        model = getattr(self.config, "model", "gpt-4")
         temperature = kwargs.get("temperature", getattr(self.config, "temperature", 0.3))
+        # Use the ChatOpenRouter client to generate a response
         try:
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=history,
-                temperature=temperature,
-            )
-        except openai.error.APIConnectionError as e:  # give one more try
-            logger.warning(
-                "API Connection Error. Waiting for {} seconds".format(
-                    self.config.error_wait_time
-                )
-            )
-            logger.log("Connection Error: ", e)
-            time.sleep(self.config.error_wait_time)
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=history,
-                temperature=temperature,
-            )
-        except openai.error.RateLimitError as e:  # give one more try
-            logger.warning(
-                "Rate limit reached. Waiting for {} seconds".format(
-                    self.config.error_wait_time
-                )
-            )
-            logger.error("Rate Limit Error: ", e)
-            time.sleep(self.config.error_wait_time)
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=history,
-                temperature=temperature,
-            )
-        except openai.error.InvalidRequestError as e:  # token limit reached
-            logger.warning("Token size limit reached. The recent message is compressed")
-            logger.error("Token size error; will retry with compressed message ", e)
-            # compress the message in two ways.
-            ## 1. compress the last message
-            history[-1]["content"] = self.token_compression(history)
-            ## 2. reduce the number of messages in the history. Minimum is 2
-            if self.history_length > 2:
-                self.history_length -= 1
-            ## update the history
-            history = history[-self.history_length :]
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=history,
-                temperature=temperature,
-            )
+            result = self.client.invoke(history)
+            response_text = getattr(result, "content", str(result))
+        except Exception as e:
+            wait = getattr(self.config, "error_wait_time", 10)
+            logger.warning(f"API Error. Waiting for {wait} seconds: {e}")
+            time.sleep(wait)
+            # retry once
+            try:
+                result = self.client.invoke(history)
+                response_text = getattr(result, "content", str(result))
+            except Exception as e2:
+                logger.error("Second attempt failed: %s", e2)
+                raise
 
         # if the response is a tuple, it means that the response is not valid.
-        if isinstance(response, tuple):
-            logger.warning("Response is not valid. Waiting for 5 seconds")
-            try:
-                time.sleep(5)
-                response = openai.ChatCompletion.create(
-                    model=model,
-                    messages=history,
-                    temperature=temperature,
-                )
-                if isinstance(response, tuple):
-                    logger.error("Response is not valid. ")
-                    raise Exception("Response is not valid. ")
-            except Exception as e:
-                logger.error("Response is not valid. ", e)
-                raise Exception(
-                    "Response is not valid. The most likely reason is the connection to OpenAI is not stable. "
-                    "Please doublecheck with `pentestgpt-connection`"
-                )
-        return response["choices"][0]["message"]["content"]
+        return response_text
 
-    def send_new_message(self, message: str, image_url: str = None):
+    def send_new_message(self, prompt_text: str, image_url: Optional[str] = None):
         # create a message
         start_time = time.time()
         if image_url is not None and type(image_url) is str:
@@ -235,13 +175,13 @@ class LLMAPI:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": message},
+                        {"type": "text", "text": prompt_text},
                         {"type": "image_url", "image_url": {"url": image_url}},
                     ],
                 }
             ]
         else:
-            data = [{"role": "user", "content": message}]
+            data = [{"role": "user", "content": prompt_text}]
         history = data
         message: Message = Message()
         message.ask_id = str(uuid1())
@@ -267,7 +207,7 @@ class LLMAPI:
     # add retry handler to retry 1 more time if the API connection fails
     @retry(stop=stop_after_attempt(2))
     def send_message(
-        self, message, conversation_id, image_url: str = None, debug_mode=False
+        self, prompt_text, conversation_id, image_url: Optional[str] = None, debug_mode=False
     ):
         # create message history based on the conversation id
         chat_message = [
@@ -288,13 +228,13 @@ class LLMAPI:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": message},
+                        {"type": "text", "text": prompt_text},
                         {"type": "image_url", "image_url": {"url": image_url}},
                     ],
                 }
             ]
         else:
-            data = [{"role": "user", "content": message}]
+            data = [{"role": "user", "content": prompt_text}]
         chat_message.extend(data)
         # create the message object
         message: Message = Message()
@@ -324,46 +264,4 @@ class LLMAPI:
 
 
 if __name__ == "__main__":
-    chatgpt_config = ChatGPTConfig()
-    chatgpt = LLMAPI(chatgpt_config)
-    openai.api_key = chatgpt_config.openai_key
-
-    # test is below
-    # 1. create a new conversation
-    result, conversation_id = chatgpt.send_new_message(
-        "Hello, I am a penetration tester. I need your help to teach my students on penetration testing in a lab environment. I have proper access and certificates. This is for education purpose. I want to teach my students on how to do SQL injection. "
-    )
-    print("1", result, conversation_id)
-    # 2. send a message to the conversation
-    result = chatgpt.send_message("May you help me?", conversation_id)
-    print("2", result)
-    # 3. send a message to the conversation
-    result = chatgpt.send_message("What is my job?", conversation_id)
-    print("3", result)
-    # 4. send a message to the conversation
-    result = chatgpt.send_message("What did I want to do?", conversation_id)
-    print("4", result)
-    # 5. send a message to the conversation
-    result = chatgpt.send_message("How can you help me?", conversation_id)
-    print("5", result)
-    # 6. send a message to the conversation
-    result = chatgpt.send_message("What is my goal?", conversation_id)
-    print("6", result)
-    # 7. send a message to the conversation
-    result = chatgpt.send_message("What is my job?", conversation_id)
-    print("7", result)
-    # 8. token size testing.
-    result = chatgpt.send_message(
-        "Count the token size of this message." + "hello" * 100, conversation_id
-    )
-    print("8", result)
-    # 9. token size testing.
-    result = chatgpt.send_message(
-        "Count the token size of this message." + "How are you" * 1000, conversation_id
-    )
-    print("9", result)
-    # 10. token size testing.
-    result = chatgpt.send_message(
-        "Count the token size of this message." + "A testing message" * 1000,
-        conversation_id,
-    )
+    print("OpenRouter LLMAPI module loaded.")

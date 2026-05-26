@@ -3,21 +3,47 @@ import os
 import time
 
 from src.prompt_class import PromptStore
-from src.agent_import import dynamic_import
-from group_knapsack import group_knapsack
+from src.agent_import import dynamic_import, RuntimeModelConfig, create_client
+import group_knapsack
       
         
 class remediation_module:
 
-    def __init__(self, reasoning_model="gpt-4-turbo", parsing_model="gpt-3.5-turbo", log_dir="logs"):
+    def __init__(
+        self,
+        reasoning_model="gpt-4-turbo",
+        parsing_model="gpt-3.5-turbo",
+        log_dir="logs",
+        reasoning_config: RuntimeModelConfig = None,
+        parsing_config: RuntimeModelConfig = None,
+        embedding_config: RuntimeModelConfig = None,
+        llm_config: RuntimeModelConfig = None,
+        rebuild_embeddings: bool = False,
+    ):
 
         self.log_dir = log_dir
         
-        self.advisor = dynamic_import(reasoning_model)
-        self.estimator = dynamic_import(reasoning_model)
-        self.extractor = dynamic_import(parsing_model)
-        self.cost_evaluator = dynamic_import(reasoning_model)
-        self.value_evaluator = dynamic_import(reasoning_model)
+        # Allow runtime configs to override the legacy model-string path.
+        if reasoning_config is not None:
+            self.advisor = create_client(reasoning_config, client_type="llm")
+            self.estimator = create_client(reasoning_config, client_type="llm")
+            self.cost_evaluator = create_client(reasoning_config, client_type="llm")
+            self.value_evaluator = create_client(reasoning_config, client_type="llm")
+        else:
+            self.advisor = dynamic_import(reasoning_model)
+            self.estimator = dynamic_import(reasoning_model)
+            self.cost_evaluator = dynamic_import(reasoning_model)
+            self.value_evaluator = dynamic_import(reasoning_model)
+
+        if parsing_config is not None:
+            self.extractor = create_client(parsing_config, client_type="llm")
+        else:
+            self.extractor = dynamic_import(parsing_model)
+
+        # Keep these on the instance for future passes where remediation may need RAG.
+        self.embedding_config = embedding_config
+        self.llm_config = llm_config
+        self.rebuild_embeddings = rebuild_embeddings
         
         self.prompts = PromptStore()
         self.history = {"penheal": [], "console": [], "user": []}

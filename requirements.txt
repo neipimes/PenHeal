@@ -7,7 +7,9 @@ tenacity
 langchain
 langchain-community
 langchain-openai
+langchain-openrouter
 huggingface_hub
 pexpect
 cvss
 paramiko
+PyYAML
