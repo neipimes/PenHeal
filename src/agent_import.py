@@ -86,16 +86,16 @@ class OpenRouter_API_Endpoint:
 class DeepSeekV4FlashConfig(OpenRouter_API_Endpoint):
     model_name: str = "deepseek/deepseek-v4-flash"
     api_key: str = os.getenv("OPENROUTER_API_KEY", "KEY NOT SET")
-    reasoning: dict[str, str] = {"effort": "high", "summary": "auto"}
-    openrouter_provider: dict[str, List[str]] = {"order": ["SiliconFlow", "AtlasCloud", 'DeepSeek']}
+    reasoning: dict[str, str] = field(default_factory=lambda: {"effort": "high", "summary": "auto"})
+    openrouter_provider: dict[str, List[str]] = field(default_factory=lambda: {"order": ["SiliconFlow", "AtlasCloud", "DeepSeek"]})
     temperature: float = 0.0
 
 @dataclass
 class DeepSeekV4ProConfig(OpenRouter_API_Endpoint):
     model_name: str = "deepseek/deepseek-v4-pro"
     api_key: str = os.getenv("OPENROUTER_API_KEY", "KEY NOT SET")
-    reasoning: dict[str, str] = {"effort": "high", "summary": "auto"}
-    openrouter_provider: dict[str, List[str]] = {"order": ["DeepSeek", "AtlasCloud", 'SiliconFlow']}
+    reasoning: dict[str, str] = field(default_factory=lambda: {"effort": "high", "summary": "auto"})
+    openrouter_provider: dict[str, List[str]] = field(default_factory=lambda: {"order": ["DeepSeek", "AtlasCloud", "SiliconFlow"]})
     temperature: float = 0.0
 
 @dataclass
